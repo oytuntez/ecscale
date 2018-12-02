@@ -77,11 +77,11 @@ def ec2_avg_cpu_utilization(clusterName, asgData, cwclient):
     return response['Datapoints'][0]['Average']
 
 
-def asg_on_min_state(clusterName, asgData, asgClient):
+def asg_on_min_state(clusterName, asgData, asgClient, activeInstanceCount):
     asg = find_asg(clusterName, asgData)
     for sg in asgData['AutoScalingGroups']:
         if sg['AutoScalingGroupName'] == asg:
-            if sg['MinSize'] == sg['DesiredCapacity']:
+            if activeInstanceCount <= sg['MinSize']:
                 return True
     
     return False 
@@ -171,12 +171,11 @@ def drain_instance(containerInstanceId, ecsClient, clusterArn):
         logger({'DrainingError': e})
 
 
-def future_metric(activeContainerDescribed, metricValue):
+def future_metric(activeInstanceCount, metricValue):
     # If the cluster were to scale in an instance, calculate the effect on the given metric value
-    # return metric_value*num_of_ec2 / num_of_ec2-1
-    numOfEc2 = len(activeContainerDescribed['containerInstances'])
-    if numOfEc2 > 1:
-        futureValue = (metricValue*numOfEc2) / (numOfEc2-1)
+    # return cluster_mem_reserve*active_instance_count / active_instance_count-1
+    if activeInstanceCount > 1:
+        futureValue = (clusterMemReservation*activeInstanceCount) / (activeInstanceCount-1)
     else:
         return 100
 
@@ -255,18 +254,19 @@ def main(run='normal'):
             clusterCpuReservation = clusterData['clusterCpuReservation']
             clusterMemReservation = clusterData['clusterMemReservation']
             activeContainerDescribed = clusterData['activeContainerDescribed']
+            activeInstanceCount = len(activeContainerDescribed['containerInstances'])
             drainingInstances = clusterData['drainingInstances']
             emptyInstances = clusterData['emptyInstances']
         ########## Cluster scaling rules ###########
-        
-        if asg_on_min_state(clusterName, asgData, asgClient):
+
+        if asg_on_min_state(clusterName, asgData, asgClient, activeInstanceCount):
             print '{}: in Minimum state, skipping'.format(clusterName) 
             continue
 
         if (clusterCpuReservation < FUTURE_CPU_TH and
            clusterMemReservation < FUTURE_MEM_TH and
-           future_metric(activeContainerDescribed, clusterCpuReservation) < FUTURE_CPU_TH and
-           future_metric(activeContainerDescribed, clusterMemReservation) < FUTURE_MEM_TH):
+           future_metric(activeInstanceCount, clusterCpuReservation) < FUTURE_CPU_TH and
+           future_metric(activeInstanceCount, clusterMemReservation) < FUTURE_MEM_TH):
         # Future reservation levels allow scale
             if DRAIN_ALL_EMPTY_INSTANCES and emptyInstances.keys():
             # There are empty instances                
@@ -288,19 +288,6 @@ def main(run='normal'):
                         drain_instance(instanceToScale, ecsClient, cluster)
                 else:
                     print 'CPU higher than TH, cannot scale'
-                
-
-        if drainingInstances.keys():
-        # There are draining instsnces to terminate
-            for instanceId, containerInstId in drainingInstances.iteritems():
-                if not running_tasks(instanceId, clusterData['drainingContainerDescribed']):
-                    if run == 'dry':
-                        print 'Would have terminated {}'.format(instanceId)
-                    else:
-                        print 'Terminating draining instance with no containers {}'.format(instanceId)
-                        terminate_decrease(instanceId, asgClient)
-                else:
-                    print 'Draining instance not empty'
 
         print '***'
 
