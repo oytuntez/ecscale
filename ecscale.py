@@ -9,6 +9,7 @@ FUTURE_CPU_TH = 40
 FUTURE_MEM_TH = 70
 ASG_PREFIX = ''
 ASG_SUFFIX = ''
+DRAIN_ALL_EMPTY_INSTANCES = True
 ECS_AVOID_STR = 'awseb'
 logline = {}
 
@@ -267,7 +268,7 @@ def main(run='normal'):
            future_metric(activeContainerDescribed, clusterCpuReservation) < FUTURE_CPU_TH and
            future_metric(activeContainerDescribed, clusterMemReservation) < FUTURE_MEM_TH):
         # Future reservation levels allow scale
-            if emptyInstances.keys():
+            if DRAIN_ALL_EMPTY_INSTANCES and emptyInstances.keys():
             # There are empty instances                
                 for instanceId, containerInstId in emptyInstances.iteritems():
                     if run == 'dry':
